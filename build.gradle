@@ -1,0 +1,109 @@
+plugins{
+    id "java"
+}
+
+version = "1.0.0"
+
+def mindustryRoot = file(findProperty("mindustryRoot") ?: "../Mindustry-master")
+def mindustryCoreJar = file("$mindustryRoot/core/build/libs/core-release.jar")
+def gradleUserHome = gradle.gradleUserHomeDir
+
+def readMindustryProperty = { String key ->
+    def props = new Properties()
+    def file = new File(mindustryRoot, "gradle.properties")
+    if(file.exists()){
+        file.withInputStream(props.&load)
+    }
+    return props.getProperty(key)
+}
+
+def findCachedArcJar = { String module, String version ->
+    if(version == null || version.isEmpty()) return null
+    def moduleDir = new File(gradleUserHome, "caches/modules-2/files-2.1/com.github.Anuken.Arc/$module/$version")
+    if(!moduleDir.exists()) return null
+    return moduleDir.listFiles()
+        ?.collectMany{ it.listFiles()?.toList() ?: [] }
+        ?.find{ it.name == "${module}-${version}.jar" }
+}
+
+def arcVersion = findProperty("arcVersion") ?: readMindustryProperty("archash")
+def arcCoreJar = findCachedArcJar("arc-core", arcVersion)
+
+sourceSets.main.java.srcDirs = ["src"]
+
+java{
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+tasks.withType(JavaCompile).configureEach{
+    options.encoding = "UTF-8"
+    options.compilerArgs.addAll(["--release", "8"])
+}
+
+tasks.register("verifyLocalClasspath"){
+    doLast{
+        if(!mindustryCoreJar.exists()){
+            throw new GradleException("Missing Mindustry core jar: $mindustryCoreJar. Build :core:jar in Mindustry-master or pass -PmindustryRoot=<path>.")
+        }
+        if(arcCoreJar == null || !arcCoreJar.exists()){
+            throw new GradleException("Missing Arc core jar for archash '$arcVersion' under $gradleUserHome. Build/resolve Mindustry-master first or pass -ParcVersion=<hash>.")
+        }
+        logger.lifecycle("Using Mindustry core: $mindustryCoreJar")
+        logger.lifecycle("Using Arc core: $arcCoreJar")
+    }
+}
+
+dependencies{
+    compileOnly files(mindustryCoreJar, arcCoreJar)
+}
+
+compileJava.dependsOn("verifyLocalClasspath")
+
+jar{
+    archiveFileName = "${project.name}.jar"
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    from(projectDir){
+        include "mod.json"
+    }
+
+    from("assets"){
+        include "**"
+    }
+}
+
+def distOutputDir = file("$rootDir/dist")
+def releaseOutputDir = file("$rootDir/../../构建/${project.name}")
+
+tasks.register("copyReleaseJarToDist", Copy){
+    dependsOn jar
+    from(jar.archiveFile)
+    into(distOutputDir)
+    rename{ "${project.name}.jar" }
+    doNotTrackState("Copies release jar into dist for publishing.")
+}
+
+tasks.register("copyReleaseJarToBuildDir", Copy){
+    dependsOn jar
+    from(jar.archiveFile)
+    into(releaseOutputDir)
+    rename{ "${project.name}-v${project.version}.jar" }
+    doNotTrackState("Copies versioned release jar into the workspace build output directory.")
+}
+
+tasks.register("jarMerged"){
+    group = "build"
+    description = "Builds the release desktop Java mod jar and copies it to release artifact directories."
+    dependsOn "copyReleaseJarToDist"
+    dependsOn "copyReleaseJarToBuildDir"
+}
+
+tasks.register("deploy"){
+    group = "build"
+    description = "Builds release artifacts."
+    dependsOn "jarMerged"
+}
+
+build.dependsOn("copyReleaseJarToDist")
+build.dependsOn("copyReleaseJarToBuildDir")

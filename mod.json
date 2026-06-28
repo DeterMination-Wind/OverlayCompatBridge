@@ -1,0 +1,12 @@
+{
+  "name": "overlay-compat-bridge",
+  "displayName": "OverlayCompatBridge",
+  "author": "Codex",
+  "repo": "DeterMination-Wind/OverlayCompatBridge",
+  "description": "Vanilla-side compatibility bridge for MindustryX OverlayUI API and window editor.",
+  "version": "1.0.0",
+  "minGameVersion": 154,
+  "java": true,
+  "hidden": false,
+  "main": "overlaycompat.OverlayCompatBridgeMod"
+}
