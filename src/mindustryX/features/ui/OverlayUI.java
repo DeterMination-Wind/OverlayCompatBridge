@@ -264,7 +264,6 @@ public class OverlayUI {
 
         public Table buildUI() {
             Table table = new Table();
-            table.image(Icon.listSmall).color(Color.lightGray).padRight(4f);
             table.add(getTitle()).width(148f).padRight(8f).ellipsis(true).left();
 
             Label pos = new Label("", Styles.outlineLabel);
@@ -300,8 +299,16 @@ public class OverlayUI {
             ImageButton eye = table.button(Icon.eyeSmall, toggle, Vars.iconSmall, () -> setEnabled(!getEnabled())).tooltip(i("toggle")).padRight(4f).get();
             eye.update(() -> eye.setChecked(getEnabled()));
 
-            ImageButton lock = table.button(Icon.lockSmall, toggle, Vars.iconSmall, () -> setPinned(!getPinned())).tooltip(i("lock")).padRight(4f).get();
-            lock.update(() -> lock.setChecked(getPinned()));
+            ImageButton lock = table.button(Icon.lockOpenSmall, toggle, Vars.iconSmall, () -> setPinned(!getPinned())).tooltip(i("lock")).padRight(4f).get();
+            ImageButton.ImageButtonStyle lockStyle = new ImageButton.ImageButtonStyle(lock.getStyle());
+            lockStyle.imageUp = Icon.lockOpenSmall;
+            lockStyle.imageChecked = Icon.lockSmall;
+            lock.setStyle(lockStyle);
+            lock.update(() -> {
+                boolean pinned = getPinned();
+                lock.setChecked(pinned);
+                lock.getImage().setDrawable(pinned ? Icon.lockSmall : Icon.lockOpenSmall);
+            });
 
             ImageButton scale = table.button(Icon.resizeSmall, toggle, Vars.iconSmall, () -> {
                 OverlayUI.INSTANCE.showFloatSettingsPanel(panel -> {
@@ -519,7 +526,15 @@ public class OverlayUI {
                 }));
 
                 ImageButton lock = header.button(Icon.lockOpenSmall, Styles.cleari, () -> data.setPinned(!data.getPinned())).get();
-                lock.update(() -> lock.setChecked(data.getPinned()));
+                ImageButton.ImageButtonStyle lockStyle = new ImageButton.ImageButtonStyle(lock.getStyle());
+                lockStyle.imageUp = Icon.lockOpenSmall;
+                lockStyle.imageChecked = Icon.lockSmall;
+                lock.setStyle(lockStyle);
+                lock.update(() -> {
+                    boolean pinned = data.getPinned();
+                    lock.setChecked(pinned);
+                    lock.getImage().setDrawable(pinned ? Icon.lockSmall : Icon.lockOpenSmall);
+                });
 
                 header.button(Icon.cancelSmall, Styles.cleari, () -> data.setEnabled(false));
 
@@ -549,13 +564,6 @@ public class OverlayUI {
                     }
                 });
 
-                if (resizable) {
-                    ImageButton handle = new ImageButton(Icon.resize, Styles.clearNonei);
-                    handle.setSize(Vars.iconMed);
-                    handle.addListener(new FixedResizeListener(Align.left | Align.bottom));
-                    handle.update(() -> handle.setPosition(0f, 0f));
-                    addChild(handle);
-                }
             } else {
                 background((arc.scene.style.Drawable)null);
                 touchable = Touchable.childrenOnly;
@@ -772,11 +780,14 @@ public class OverlayUI {
     private final WidgetGroup group = new WidgetGroup();
     private final Seq<AdsorptionSystem.Constraint> constraintDrawTask = new Seq<>();
 
+    private Table toggleTable;
     private boolean open;
     private boolean initialized;
+    private boolean warnedOverlayButtonHidden;
 
     private OverlayUI() {
         buildGroup();
+        Log.info("[OverlayCompatBridge] OverlayUI constructed.");
     }
 
     public boolean getOpen() {
@@ -795,13 +806,34 @@ public class OverlayUI {
         Window window = new Window(name, table);
         group.addChild(window);
         window.rebuild();
+        Log.info("[OverlayCompatBridge] OverlayUI registered window '" + name + "'. windows=" + getWindows().size());
+        debugLogState("after-register-" + name);
         return window;
     }
 
     public void init() {
-        if (initialized) return;
+        if (Core.scene == null) {
+            Log.info("[OverlayCompatBridge] OverlayUI init skipped: scene is null.");
+            debugLogState("init-no-scene");
+            return;
+        }
+        if (initialized && isAttached()) {
+            Log.info("[OverlayCompatBridge] OverlayUI init skipped: already initialized.");
+            debugLogState("init-skipped");
+            return;
+        }
+        Log.info("[OverlayCompatBridge] OverlayUI init add group to scene. initialized=" + initialized
+            + ", attached=" + isAttached());
+        if (!isAttached()) {
+            Core.scene.add(group);
+        }
+        group.toFront();
         initialized = true;
-        Core.scene.add(group);
+        debugLogState("init");
+    }
+
+    public boolean isAttached() {
+        return group.parent != null && group.getScene() != null;
     }
 
     public void toggle() {
@@ -810,6 +842,8 @@ public class OverlayUI {
             window.updateVisibility();
             if (window.visible) window.rebuild();
         }
+        Log.info("[OverlayCompatBridge] OverlayUI toggled. open=" + open + ", windows=" + getWindows().size());
+        debugLogState("toggle");
     }
 
     public void showFloatSettingsPanel(Cons<Table> builder) {
@@ -875,10 +909,15 @@ public class OverlayUI {
         tips.setFillParent(true);
         group.addChild(tips);
 
-        Table toggleTable = new Table();
+        toggleTable = new Table();
         toggleTable.left();
         toggleTable.name = "toggle";
-        toggleTable.button(Icon.settings, Styles.clearNonei, this::toggle).size(Vars.iconMed);
+        Table toggleButtonBox = new Table(Styles.black6);
+        toggleButtonBox.margin(2f);
+        toggleButtonBox.button(Icon.settings, Styles.clearNonei, this::toggle).size(Vars.iconMed);
+        toggleTable.add().growY().row();
+        toggleTable.add(toggleButtonBox).pad(4f).left().center().row();
+        toggleTable.add().growY();
         toggleTable.visibility = (Boolp)(showOverlayButton::get);
         toggleTable.setFillParent(true);
         group.addChild(toggleTable);
@@ -921,6 +960,49 @@ public class OverlayUI {
 
         initDynamicAdsorption();
         group.update(AdsorptionSystem.INSTANCE::update);
+    }
+
+    public void debugLogState(String phase) {
+        boolean overlayButton = showOverlayButton.get();
+        if (!overlayButton && !warnedOverlayButtonHidden) {
+            warnedOverlayButtonHidden = true;
+            Log.warn("[OverlayCompatBridge] gameUI.overlayButton=false; the left OverlayUI gear button is hidden by settings.");
+        }
+
+        boolean scene = Core.scene != null;
+        boolean groupParent = group.parent != null;
+        boolean groupScene = group.getScene() != null;
+        boolean groupVisible = group.visible;
+        boolean togglePresent = toggleTable != null;
+        boolean toggleVisible = togglePresent && toggleTable.visible;
+        boolean toggleScene = togglePresent && toggleTable.getScene() != null;
+        String toggleBounds = togglePresent
+            ? toggleTable.x + "," + toggleTable.y + " " + toggleTable.getWidth() + "x" + toggleTable.getHeight()
+            : "missing";
+        boolean hudGroup = Vars.ui != null && Vars.ui.hudGroup != null;
+        boolean hudfrag = Vars.ui != null && Vars.ui.hudfrag != null;
+        boolean hudShown = hudfrag && Vars.ui.hudfrag.shown;
+        boolean menu = Vars.state != null && Vars.state.isMenu();
+        String sceneSize = scene ? Core.scene.getWidth() + "x" + Core.scene.getHeight() : "none";
+
+        Log.info("[OverlayCompatBridge] OverlayUI state [" + phase + "]: initialized=" + initialized
+            + ", open=" + open
+            + ", scene=" + scene
+            + ", sceneSize=" + sceneSize
+            + ", groupParent=" + groupParent
+            + ", groupScene=" + groupScene
+            + ", groupVisible=" + groupVisible
+            + ", groupChildren=" + group.getChildren().size
+            + ", overlayButtonSetting=" + overlayButton
+            + ", togglePresent=" + togglePresent
+            + ", toggleVisible=" + toggleVisible
+            + ", toggleScene=" + toggleScene
+            + ", toggleBounds=" + toggleBounds
+            + ", hudGroup=" + hudGroup
+            + ", hudfrag=" + hudfrag
+            + ", hudShown=" + hudShown
+            + ", menu=" + menu
+            + ", windows=" + getWindows().size());
     }
 
     private void initDynamicAdsorption() {
